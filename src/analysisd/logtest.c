@@ -175,10 +175,11 @@ char *w_logtest_generate_error_response(char * msg){
 }
 
 
-cJSON *w_logtest_process_log(cJSON * request, w_logtest_session_t * session, OSList * list_msg) {
+cJSON *w_logtest_process_log(cJSON * request, w_logtest_session_t * session, bool * alert_generated, OSList * list_msg) {
 
     cJSON *output = NULL;
     Eventinfo *lf = NULL;
+    bool added_memory;
 
     /* Initialize eventinfo which will contain alert information */
     os_calloc(1, sizeof(Eventinfo), lf);
@@ -201,14 +202,15 @@ cJSON *w_logtest_process_log(cJSON * request, w_logtest_session_t * session, OSL
     }
 
     /* Rules matching */
-    if (w_logtest_rulesmatching_phase(lf, session, list_msg) != 0) {
+    if (w_logtest_rulesmatching_phase(lf, session, &added_memory, list_msg) != 0) {
         Free_Eventinfo(lf);
         return output;
     }
 
-    /* Add alert description to the event if exist a match */
+    /* Add alert description to the event and check alert level if exist a match */
     if (lf->generated_rule) {
         lf->comment = ParseRuleComment(lf);
+        *alert_generated = added_memory && Config.logbylevel <= lf->generated_rule->level;
     }
 
     /* Parse the alert */
@@ -217,7 +219,7 @@ cJSON *w_logtest_process_log(cJSON * request, w_logtest_session_t * session, OSL
     os_free(output_str);
 
     /* Clear the memory if the event was not added to the stateful memory */
-    if (lf->generated_rule == NULL) {
+    if (!added_memory) {
         Free_Eventinfo(lf);
     }
 
@@ -281,16 +283,15 @@ void w_logtest_decoding_phase(Eventinfo * lf, w_logtest_session_t * session) {
 }
 
 
-int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session, OSList * list_msg) {
+int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session, bool * added_memory, OSList * list_msg) {
 
     RuleNode * rulenode = NULL;
     RuleInfo * ruleinformation = NULL;
+    *added_memory = false;
 
     if (rulenode = session->rule_list, !rulenode) {
         return -1;
     }
-
-    lf->generated_rule = NULL;
 
     do {
 
@@ -309,6 +310,7 @@ int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session,
             continue;
         }
 
+        lf->generated_rule = ruleinformation;
 
         /* Ignore level 0 */
         if (ruleinformation->level == 0) {
@@ -331,12 +333,9 @@ int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session,
 
         /* Check if we should ignore it */
         if (ruleinformation->ckignore && IGnore(lf, 0)) {
-            lf->generated_rule = NULL;
             break;
         }
 
-        /* If the rule's matching is not ignored, it is added to the event list */
-        lf->generated_rule = ruleinformation;
 
         /* Copy the structure to the state memory of if_matched_sid */
         if (ruleinformation->sid_prev_matched) {
@@ -362,6 +361,7 @@ int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session,
         }
 
         OS_AddEvent(lf, session->eventlist);
+        *added_memory = true;
         break;
 
     } while(rulenode = rulenode->next, rulenode);
@@ -870,28 +870,6 @@ char * w_logtest_generate_token() {
     return str_token;
 }
 
-int w_logtest_get_rule_level(cJSON * json_log_processed) {
-
-    cJSON * rule;
-    cJSON * level;
-    int ret = 0;
-
-    if (!json_log_processed) {
-        mdebug1(LOGTEST_INFO_LOG_EMPTY);
-        ret = 0;
-    } else if (rule = cJSON_GetObjectItemCaseSensitive(json_log_processed, "rule"), !rule) {
-        mdebug1(LOGTEST_INFO_LOG_NOALERT);
-        ret = 0;
-    } else if (level = cJSON_GetObjectItemCaseSensitive(rule, "level"), !level) {
-        mdebug1(LOGTEST_INFO_LOG_NOLEVEL);
-        ret = 0;
-    } else if (cJSON_IsNumber(level)) {
-        ret = level->valueint;
-    }
-
-    return ret;
-}
-
 
 void w_logtest_add_msg_response(cJSON * response, OSList * list_msg, int * error_code) {
 
@@ -1006,6 +984,7 @@ int w_logtest_process_request_log_processing(cJSON * json_request, cJSON * json_
     cJSON * json_log_processed = NULL;
 
     int retval = W_LOGTEST_RCODE_SUCCESS;
+    bool alert_generated = false;
 
     /* Get session */
     current_session = w_logtest_get_session(json_request, list_msg, connection);
@@ -1017,7 +996,7 @@ int w_logtest_process_request_log_processing(cJSON * json_request, cJSON * json_
     /* Proccess log */
     if (retval >= W_LOGTEST_RCODE_SUCCESS && current_session) {
 
-        json_log_processed = w_logtest_process_log(json_request, current_session, list_msg);
+        json_log_processed = w_logtest_process_log(json_request, current_session, &alert_generated, list_msg);
         if (json_log_processed) {
             cJSON_AddItemToObject(json_response, W_LOGTEST_JSON_OUTPUT, json_log_processed);
         } else {
@@ -1029,8 +1008,7 @@ int w_logtest_process_request_log_processing(cJSON * json_request, cJSON * json_
 
     /* Check alert level */
     if (retval >= W_LOGTEST_RCODE_SUCCESS) {
-        uint8_t rule_level = (uint8_t) w_logtest_get_rule_level(json_log_processed);
-        int alert = (Config.logbylevel <= rule_level) ? 1 : 0;
+        int alert = (alert_generated) ? 1 : 0;
         cJSON_AddBoolToObject(json_response, W_LOGTEST_JSON_ALERT, alert);
     }
 

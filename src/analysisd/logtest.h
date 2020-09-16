@@ -126,10 +126,11 @@ void *w_logtest_clients_handler();
  * @brief Process client's request
  * @param request client input
  * @param session client session
+ * @param alert_generated returns true if the alert should be generated
  * @param list_msg list of error/warn/info messages
  * @return NULL on failure, otherwise the alert generated
  */
-cJSON *w_logtest_process_log(cJSON * request, w_logtest_session_t * session, OSList * list_msg);
+cJSON *w_logtest_process_log(cJSON * request, w_logtest_session_t * session, bool * alert_generated, OSList * list_msg);
 
 /**
  * @brief Preprocessing phase
@@ -159,10 +160,11 @@ void w_logtest_decoding_phase(Eventinfo * lf, w_logtest_session_t * session);
  *
  * @param lf struct to save the event processed
  * @param session client session
+ * @param added_memory returns true if the event was added to memory, otherwise return false
  * @param list_msg list of error/warn/info messages
  * @return 0 on success, otherwise return -1
  */
-int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session, OSList * list_msg);
+int w_logtest_rulesmatching_phase(Eventinfo * lf, w_logtest_session_t * session, bool * added_memory, OSList * list_msg);
 
 /**
  * @brief Create resources necessary to service client
@@ -277,13 +279,6 @@ void w_logtest_register_session(w_logtest_connection_t * connection, w_logtest_s
  * @param connection Manager of connections
  */
 void w_logtest_remove_old_session(w_logtest_connection_t * connection);
-
-/**
- * @brief Get the level of de triggered rule within json_log_processed
- * @param json_log_processed Proccessed log
- * @return level rule
- */
-int w_logtest_get_rule_level(cJSON* json_log_processed);
 
 /**
  * @brief Processes a client input request
