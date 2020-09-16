@@ -3,6 +3,7 @@
 # This program is free software; you can redistribute it and/or modify it under the terms of GPLv2
 
 import hashlib
+import logging
 import operator
 from os import chmod, path, listdir
 from shutil import copyfile
@@ -10,7 +11,7 @@ from shutil import copyfile
 from wazuh.core import common, configuration
 from wazuh.core.InputValidator import InputValidator
 from wazuh.core.agent import WazuhDBQueryAgents, WazuhDBQueryGroupByAgents, \
-    WazuhDBQueryMultigroups, Agent, WazuhDBQueryGroup, get_agents_info, get_groups
+    WazuhDBQueryMultigroups, Agent, WazuhDBQueryGroup, get_agents_info, get_groups, core_upgrade_agents
 from wazuh.core.cluster.cluster import get_node
 from wazuh.core.cluster.utils import read_cluster_config
 from wazuh.core.exception import WazuhError, WazuhInternalError, WazuhException, WazuhPermissionError, \
@@ -18,6 +19,9 @@ from wazuh.core.exception import WazuhError, WazuhInternalError, WazuhException,
 from wazuh.core.results import WazuhResult, AffectedItemsWazuhResult
 from wazuh.core.utils import chmod_r, chown_r, get_hash, mkdir_with_mode, md5, process_array
 from wazuh.rbac.decorators import expose_resources
+from wazuh.core.agent import core_upgrade_agents
+
+logger = logging.getLogger('wazuh')
 
 cluster_enabled = not read_cluster_config()['disabled']
 node_id = get_node().get('node') if cluster_enabled else None
@@ -39,9 +43,9 @@ def get_distinct_agents(agent_list=None, offset=0, limit=common.database_limit, 
     :return: WazuhResult
     """
 
-    result = AffectedItemsWazuhResult(all_msg='All selected agents information is shown',
-                                      some_msg='Some agents information is not shown',
-                                      none_msg='No agent information is shown'
+    result = AffectedItemsWazuhResult(all_msg='All selected agents information was returned',
+                                      some_msg='Some agents information was not returned',
+                                      none_msg='No agent information was returned'
                                       )
 
     if len(agent_list) != 0:
@@ -86,7 +90,6 @@ def get_agents_summary_os(agent_list=None):
                                       all_msg='Showing the operative system of all specified agents',
                                       some_msg='Could not get the operative system of some agents')
     if len(agent_list) != 0:
-
         db_query = WazuhDBQueryAgents(select=['os.platform'], filters={'id': agent_list},
                                       default_sort_field='os_platform', min_select_fields=set(),
                                       distinct=True)
@@ -106,9 +109,10 @@ def restart_agents(agent_list=None):
     :param agent_list: List of agents ID's.
     :return: AffectedItemsWazuhResult.
     """
-    result = AffectedItemsWazuhResult(none_msg='Could not send command to any agent',
-                                      all_msg='Restart command sent to all agents',
-                                      some_msg='Could not send command to some agents')
+    result = AffectedItemsWazuhResult(all_msg='Restart command was sent to all agents',
+                                      some_msg='Restart command was not sent to some agents',
+                                      none_msg='Restart command was not sent to any agent'
+                                      )
 
     system_agents = get_agents_info()
     for agent_id in agent_list:
@@ -164,9 +168,9 @@ def get_agents(agent_list=None, offset=0, limit=common.database_limit, sort=None
     :param q: Defines query to filter in DB.
     :return: AffectedItemsWazuhResult.
     """
-    result = AffectedItemsWazuhResult(all_msg='All selected agents information is shown',
-                                      some_msg='Some agents information is not shown',
-                                      none_msg='No agent information is shown'
+    result = AffectedItemsWazuhResult(all_msg='All selected agents information was returned',
+                                      some_msg='Some agents information was not returned',
+                                      none_msg='No agent information was returned'
                                       )
     if len(agent_list) != 0:
         if filters is None:
@@ -342,9 +346,9 @@ def get_agent_groups(group_list=None, offset=0, limit=None, sort=None, search=No
     """
 
     affected_groups = list()
-    result = AffectedItemsWazuhResult(all_msg='Obtained information about all selected groups',
-                                      some_msg='Some groups information was not obtained',
-                                      none_msg='No group information was obtained'
+    result = AffectedItemsWazuhResult(all_msg='All selected groups information was returned',
+                                      some_msg='Some groups information was not returned',
+                                      none_msg='No group information was returned'
                                       )
 
     # Add failed items
@@ -394,9 +398,9 @@ def get_group_files(group_list=None, offset=0, limit=None, search_text=None, sea
     # a list of groups
     group_id = group_list[0]
     group_path = common.shared_path
-    result = AffectedItemsWazuhResult(all_msg='All selected groups files are shown',
-                                      some_msg='Some groups files are not shown',
-                                      none_msg='No groups files are shown'
+    result = AffectedItemsWazuhResult(all_msg='All selected groups files were returned',
+                                      some_msg='Some groups files were not returned',
+                                      none_msg='No groups files were returned'
                                       )
     if group_id:
         if not Agent.group_exists(group_id):
@@ -457,7 +461,7 @@ def create_group(group_id):
         chown_r(group_path, common.ossec_uid(), common.ossec_gid())
         chmod_r(group_path, 0o660)
         chmod(group_path, 0o770)
-        msg = "Group '{0}' created.".format(group_id)
+        msg = f"Group '{group_id}' created."
     except Exception as e:
         raise WazuhInternalError(1005, extra_message=str(e))
 
@@ -581,9 +585,9 @@ def remove_agent_from_groups(agent_list=None, group_list=None):
     :return: AffectedItemsWazuhResult.
     """
     agent_id = agent_list[0]
-    result = AffectedItemsWazuhResult(all_msg='Specified agent removed from shown groups',
-                                      some_msg='Specified agent could not be removed from some groups',
-                                      none_msg='Specified agent could not be removed from any group'
+    result = AffectedItemsWazuhResult(all_msg='Specified agent was removed from returned groups',
+                                      some_msg='Specified agent was not removed from some groups',
+                                      none_msg='Specified agent was not removed from any group'
                                       )
 
     # Check if agent exists and it is not 000
@@ -664,9 +668,9 @@ def get_outdated_agents(agent_list=None, offset=0, limit=common.database_limit, 
     :return: AffectedItemsWazuhResult.
     """
 
-    result = AffectedItemsWazuhResult(all_msg='All selected agents information is shown',
-                                      some_msg='Some agents information is not shown',
-                                      none_msg='No agent information is shown'
+    result = AffectedItemsWazuhResult(all_msg='All selected agents information was returned',
+                                      some_msg='Some agents information was not returned',
+                                      none_msg='No agent information was returned'
                                       )
     if len(agent_list) != 0:
         # Get manager version
@@ -684,55 +688,109 @@ def get_outdated_agents(agent_list=None, offset=0, limit=common.database_limit, 
     return result
 
 
-@expose_resources(actions=["agent:upgrade"], resources=["agent:id:{agent_list}"], post_proc_func=None)
-def upgrade_agents(agent_list=None, wpk_repo=None, version=None, force=False, chunk_size=None, use_http=False):
+@expose_resources(actions=["agent:upgrade"], resources=["agent:id:{agent_list}"],
+                  post_proc_kwargs={'exclude_codes': [1818]})
+def upgrade_agents(agent_list=None, wpk_repo=None, version=None, force=False, use_http=False,
+                   file_path=None, installer=None):
+    """Start the agent upgrade process.
+
+    Parameters
+    ----------
+    agent_list : list
+        List of agents ID's.
+    wpk_repo : str
+        URL for WPK download.
+    version : str
+        Version to upgrade to.
+    force : bool
+        force the update even if it is a downgrade.
+    use_http : bool
+        False for HTTPS protocol, True for HTTP protocol.
+    file_path : str
+        Path to the installation file.
+    installer : str
+        Selected installer.
+
+    Returns
+    -------
+    ID of created tasks
+    """
+    result = AffectedItemsWazuhResult(all_msg='All upgrade tasks have been created',
+                                      some_msg='Some upgrade tasks have been created',
+                                      none_msg='No upgrade task has been created',
+                                      sort_fields=['task_id'], sort_ascending='True')
+
+    '000' in agent_list and agent_list.remove('000')
+    wpk_repo = wpk_repo if wpk_repo else common.wpk_repo_url_4_x
+    if version and not version.startswith('v'):
+        version = f'v{version}'
+    msg = {
+        'command': 'upgrade' if not (installer or file_path) else 'upgrade_custom',
+        'agents': list(map(int, agent_list)),
+        'params': {
+            'version': version,
+            'force_upgrade': 0 if not force else 1,
+            'use_http': 1 if use_http else 0,
+            'wpk_repo': f'{wpk_repo}/' if not wpk_repo.endswith('/') else wpk_repo,
+            'file_path': file_path,
+            'installer': installer
+        }
+    }
+    msg['params'] = {k: v for k, v in msg['params'].items() if v is not None}
+    data = core_upgrade_agents(command=msg)
+
+    for agent_result in data:
+        if agent_result['error'] == 0:
+            task_agent = {
+                'agent_id': str(agent_result['agent']).zfill(3),
+                'task_id': agent_result['task_id']
+            }
+            result.affected_items.append(task_agent)
+            result.total_affected_items += 1
+        else:
+            error = WazuhError(code=1810 + agent_result['error'], cmd_error=True, extra_message=agent_result['data'])
+            result.add_failed_item(id_=str(agent_result['agent']).zfill(3), error=error)
+
+    return result
+
+
+@expose_resources(actions=["agent:upgrade"], resources=["agent:id:{agent_list}"],
+                  post_proc_kwargs={'exclude_codes': [1817]})
+def get_upgrade_result(agent_list=None):
     """Read upgrade result output from agent.
 
-    :param agent_list: List of agents ID's.
-    :param wpk_repo: URL for WPK download.
-    :param version: Version to upgrade to.
-    :param force: force the update even if it is a downgrade.
-    :param chunk_size: size of each update chunk.
-    :param use_http: False for HTTPS protocol, True for HTTP protocol.
-    :return: Upgrade message.
+    Parameters
+    ----------
+    agent_list : list
+        List of agent ID's.
+
+    Returns
+    -------
+    Upgrade result.
     """
-    # We access unique agent_id from list, this may change if and when we decide to add option to upgrade a list of
-    # agents
-    agent_id = agent_list[0]
+    result = AffectedItemsWazuhResult(all_msg='All agents have been updated',
+                                      some_msg='Some agents have not been updated',
+                                      none_msg='No agent has been updated')
 
-    return Agent(agent_id).upgrade(wpk_repo=wpk_repo, version=version, force=True if int(force) == 1 else False,
-                                   chunk_size=chunk_size, use_http=use_http)
+    command_list = list()
+    for agent in agent_list:
+        command_list.append({'command': 'upgrade_result', 'module': 'api', 'agent': int(agent)})
 
+    task_results = core_upgrade_agents(command_list, get_result=True)
+    for task_result in task_results:
+        task_error = task_result.pop('error')
+        if task_error == 0:
+            task_result.pop('data')
+            task_result['agent_id'] = str(task_result.pop('agent')).zfill(3)
+            result.affected_items.append(task_result)
+            result.total_affected_items += 1
+        else:
+            error = WazuhError(code=1810 + task_error, cmd_error=True, extra_message=task_result['data'])
+            result.add_failed_item(id_=str(task_result.pop('agent')).zfill(3), error=error)
 
-@expose_resources(actions=["agent:upgrade"], resources=["agent:id:{agent_list}"], post_proc_func=None)
-def get_upgrade_result(agent_list=None, timeout=3):
-    """Read upgrade result output from agent.
+    result.affected_items = sorted(result.affected_items, key=lambda k: k['task_id'])
 
-    :param agent_list: List of agents ID's.
-    :param timeout: Maximum time for the call to be considered failed.
-    :return: Upgrade result.
-    """
-    # We access unique agent_id from list, this may change if and when we decide to add option to upgrade a list of
-    # agents
-    agent_id = agent_list[0]
-
-    return Agent(agent_id).upgrade_result(timeout=int(timeout))
-
-
-@expose_resources(actions=["agent:upgrade"], resources=["agent:id:{agent_list}"], post_proc_func=None)
-def upgrade_agents_custom(agent_list=None, file_path=None, installer=None):
-    """Read upgrade result output from agent.
-
-    :param agent_list: List of agents ID's.
-    :param file_path: Path to the installation file.
-    :param installer: Selected installer.
-    :return: Upgrade message.
-    """
-    # We access unique agent_id from list, this may change if and when we decide to add option to upgrade a list of
-    # agents
-    agent_id = agent_list[0]
-
-    return Agent(agent_id).upgrade_custom(file_path=file_path, installer=installer)
+    return result
 
 
 @expose_resources(actions=["agent:read"], resources=["agent:id:{agent_list}"], post_proc_func=None)
@@ -764,9 +822,10 @@ def get_agents_sync_group(agent_list=None):
     :param agent_list: List of agents ID's.
     :return AffectedItemsWazuhResult.
     """
-    result = AffectedItemsWazuhResult(none_msg='No sync info shown.',
-                                      all_msg='Sync info shown for all selected agents.',
-                                      some_msg='Could not show sync info for some selected agents.')
+    result = AffectedItemsWazuhResult(all_msg='Sync info was returned for all selected agents',
+                                      some_msg='Sync info was not returned for some selected agents',
+                                      none_msg='No sync info was returned',
+                                      )
 
     system_agents = get_agents_info()
     for agent_id in agent_list:
